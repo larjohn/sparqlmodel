@@ -15,381 +15,428 @@
 namespace Legrand;
 
 /**
-*
-* A model for Laravel 4, that can manage object through a graph database using SPARQL endpoint.
-*
-* @author Damien Legrand  < http://damienlegrand.com >
-*/
+ *
+ * A model for Laravel 4, that can manage object through a graph database using SPARQL endpoint.
+ *
+ * @author Damien Legrand  < http://damienlegrand.com >
+ */
 
 use Illuminate\Support\Contracts\JsonableInterface;
 use Illuminate\Support\Contracts\ArrayableInterface;
 use Illuminate\Support\Facades\Config;
 use Legrand\SPARQL;
 
-class SPARQLModel implements JsonableInterface, ArrayableInterface {
+class SPARQLModel implements JsonableInterface, ArrayableInterface
+{
 
-        protected static $mapping       = [];
-        protected static $multiMapping  = [];
+    protected static $mapping = [];
+    protected static $multiMapping = [];
+    protected static $baseURI = null;
+    protected static $type = null;
+    protected static $status = true;
+    public $identifier = null;
+    public $inStore = false;
+    public  static $typeRegistry = array();
 
-        protected static $baseURI       = null;
-        protected static $type          = null;
-        protected static $status        = true;
 
-        public $identifier              = null;
-        public $inStore                 = false;
+    public static function init(){
 
-        public function select()
-        {
-                if($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
+        self::$typeRegistry[self::$type] = get_called_class();
+    }
 
-                $sparql = new SPARQL();
-                $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+    public static function find($id)
+    {
+        $class = get_called_class();
+        $m = new $class;
 
-                $filter = "?uri = <".$this->identifier."> && (";
-                $first = true;
-                foreach ($this::$mapping as $k => $v) 
-                {
-                        if($first) $first = false; 
-                        else $filter .= " || ";
+        if ((strlen($id) < 7 || substr($id, 0, 7) != 'http://') && static::$baseURI != null) $id = static::$baseURI . $id;
 
-                        $filter .= "?property = <$k>";
-                }
+        $m->identifier = $id;
+        $m->select();
 
-                $filter .= ")";
+        return $m;
+    }
 
-                $sparql->select(Config::get('sparqlmodel.graph'))->where('?uri', '?property', '?value');
+    public static function getMapping()
+    {
+        return static::$mapping;
+    }
 
-                if($this::$status) $sparql->where('?uri', '<' . Config::get('sparqlmodel.status') . '>', 1);
+    public function processLine($value)
+    {
+        if (!isset($value['uri']['value']) || $value['uri']['value'] != $this->identifier) return;
 
-                $data = $sparql->filter($filter)->launch();
-
-                if(!isset($data['results']) || !isset($data['results']['bindings']))
-                {
-                    return;
-                }
-
-                foreach ($data['results']['bindings'] as $value) 
-                {
-                        $this->process($value);
-                }
-        }
-
-        public function process($value)
-        {
-                if(!isset($value['uri']['value']) || $value['uri']['value'] != $this->identifier) return;
-
-                $property = '';
-                if(isset($this::$mapping[$value['property']['value']])) $property = $this::$mapping[$value['property']['value']];
-                else continue;
-
-                $this->$property = $value['value']['value'];
-                $this->inStore = true;
-        }
-
-        public function processLine($value)
-        {
-                if(!isset($value['uri']['value']) || $value['uri']['value'] != $this->identifier) return;
-
-                foreach ($this::$mapping as $uri => $property) 
-                {
-                    if(isset($value[$property]))
-                    {
-                        $this->$property = $value[$property]['value'];
-                    }
-                }
-
-                $this->inStore = true;
-        }
-
-        public function add($data)
-        {
-            foreach ($data as $key => $value) 
-            {
-                $this->$key = $value;
+        foreach ($this::$mapping as $uri => $property) {
+            if (isset($value[$property])) {
+                $this->$property = $value[$property]['value'];
             }
         }
 
-        public function listing($forProperty=false)
-        {
-                if($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
+        $this->inStore = true;
+    }
 
-                foreach ($this::$multiMapping as $k => $v) 
-                {
-                        if($forProperty != false)
-                        {
-                                if($v['property'] != $forProperty) continue;
-                        }
 
-                        $array = [];
 
-                        $sparql = new SPARQL();
-                        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+    public function add($data)
+    {
+        foreach ($data as $key => $value) {
+            $this->$key = $value;
+        }
+    }
 
-                        $elementMapping = call_user_func([$v['mapping'], 'getMapping']);
+    public function listing($forProperty = false)
+    {
+        if ($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
 
-                        $sparql->select(Config::get('sparqlmodel.graph'))->distinct(true)
-                                        ->where('<'.$this->identifier.'>', "<$k>", '?uri');
+        foreach ($this::$multiMapping as $k => $v) {
 
-                        foreach ($elementMapping as $uri => $p) 
-                        {
-                                $sparql->optionalWhere('?uri', '<'.$uri.'>', "?$p");
-                        }
-                        
-                        if(isset($v['order']) && count($v['order']) == 2) $sparql->orderBy($v['order'][0] . "(?" . $v['order'][1] . ")");
-                        if(isset($v['limit']) && is_numeric($v['limit'])) $sparql->limit($v['limit']);
+            if ($forProperty != false) {
+                if ($v['property'] != $forProperty) continue;
+            }
 
-                        $data =  $sparql->launch();
+            $array = [];
 
-                        foreach ($data['results']['bindings'] as $value) 
-                        {
-                                $found = false;
-                                foreach ($array as $element) 
-                                {
-                                        if($element->identifier == $value['uri']['value'])
-                                        {
-                                                $found = true;
-                                                $element->processLine($value);
-                                                break;
-                                        }
-                                }
+            $sparql = new SPARQL();
+            $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
 
-                                if(!$found)
-                                {
-                                        $newElement = new $v['mapping']();
-                                        $newElement->identifier = $value['uri']['value'];
-                                        $newElement->processLine($value);
-                                        $array[] = $newElement;
-                                }
-                        }
+            $elementMapping = call_user_func([$v['mapping'], 'getMapping']);
+            if (isset($v["inverse"]) && $v["inverse"]) {
+                $sparql->select(Config::get('sparqlmodel.graph'))->distinct(true)
+                    ->where('?uri', "<$k>", '<' . $this->identifier . '>');
+            } else {
+                $sparql->select(Config::get('sparqlmodel.graph'))->distinct(true)
+                    ->where('<' . $this->identifier . '>', "<$k>", '?uri');
+            }
 
-                        $this->$v['property'] = $array;
 
-                        if($forProperty != false) break;
+            foreach ($elementMapping as $uri => $p) {
+
+                $sparql->optionalWhere('?uri', '<' . $uri . '>', "?$p");
+            }
+
+            if (isset($v['order']) && count($v['order']) == 2) $sparql->orderBy($v['order'][0] . "(?" . $v['order'][1] . ")");
+            if (isset($v['limit']) && is_numeric($v['limit'])) $sparql->limit($v['limit']);
+
+            $data = $sparql->launch();
+
+            foreach ($data['results']['bindings'] as $value) {
+                $found = false;
+                foreach ($array as $element) {
+                    if ($element->identifier == $value['uri']['value']) {
+                        $found = true;
+                        $element->processLine($value);
+                        break;
+                    }
                 }
 
-                return $this;
+                if (!$found) {
+                    $newElement = new $v['mapping']();
+                    $newElement->identifier = $value['uri']['value'];
+                    $newElement->processLine($value);
+                    $array[] = $newElement;
+                }
+            }
+
+            $this->$v['property'] = $array;
+
+            if ($forProperty != false) break;
         }
 
-        public function save($moreData=[])
-        {
-                if($this->inStore)
-                {
-                    //we update here so we delete triples
+        return $this;
+    }
 
-                    $filter = "";
-                    foreach ($this::$mapping as $uri => $property) 
-                    {
-                            if(isset($this->$property) && ($uri != Config::get('sparqlmodel.created') || $uri != Config::get('sparqlmodel.updated')))
-                            { 
-                                if($filter != "") $filter .= " || ";
-                                $filter .= "?x = <$uri>";
+    public static  function listingFromQuery($query, $forProperty = false)
+    {
+        //if ($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
+        $sparql = new SPARQL();
+        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+        $sparql->sparql = $query;
+        $data = $sparql->launch(false);
+
+
+
+            foreach ($data['results']['bindings'] as $value) {
+                if(!isset($array[$value["s"]["value"]]))
+                    $array[$value["s"]["value"]] = array();
+                    if(!isset($array[$value["s"]["value"]][$value["p"]["value"]]))
+                        $array[$value["s"]["value"]][$value["p"]["value"]] = array();
+                    $array[$value["s"]["value"]][$value["p"]["value"]][] = $value["o"]["value"];
+
+
+
+            }
+
+            $objects = array();
+            foreach ($array as $id=>$rdfo) {
+                $thisClass = get_called_class();
+                $newElement = new $thisClass();
+                $newElement->identifier = $id;
+                foreach ($rdfo as $property=>$value) {
+
+                    if(isset($thisClass::$mapping[$property])){
+                        $objectProperty = $thisClass::$mapping[$property];
+                        $newElement->$objectProperty = $value;
+                        continue;
+                    }
+                    elseif(isset($thisClass::$multiMapping[$property]['property'])){
+                        foreach($value as $val){
+                            $objectProperty = $thisClass::$multiMapping[$property]['property'];
+                            $propertyClass = $thisClass::$multiMapping[$property]['mapping'];
+                            if(isset($objects[$val])){
+                                $propertyObject = $objects[$val];
                             }
-                    }
+                            else {
 
-                    foreach ($moreData as $uri => $value)
-                    {
-                            if($filter != "") $filter .= " || ";
-                            $filter .= "?x = <$uri>";
-                    }
+                                $propertyObject = new $propertyClass();
+                                $propertyObject->identifier = $val;
+                                $objects[$val] = $propertyObject;
+                            }
+                            if(!isset($newElement->$objectProperty))
+                                $newElement->$objectProperty = array();
 
-                    $filter .= " || ?x = <" . Config::get('sparqlmodel.updated') . ">";
-
-                    $sparqlD = new SPARQL();
-                    $sparqlD->baseUrl = Config::get('sparqlmodel.endpoint');
-
-                    $sparqlD->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> ?x ?y')
-                            ->where('<' . $this->identifier . '>', '?x', '?y')
-                            ->filter($filter)
-                            ->launch();
-                }
-                else
-                {
-                        $this->identifier = $this->generateID();
-                        $this->select();
-                        if($this->inStore) return;
-                }
-
-                $this->identifier = $this->generateID();
-
-                $sparql = new SPARQL();
-                $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
-
-                $sparql->insert(Config::get('sparqlmodel.graph'));
-
-                foreach ($this::$mapping as $uri => $property) 
-                {
-                        if(isset($this->$property))
-                        { 
-                            $p = (is_string($this->$property)) ? "'" . $this->$property . "'" : $this->$property;
-                            $sparql->where('<' . $this->identifier . '>', '<' . $uri . '>', $p);
+                            $newElement->{$objectProperty}[] = $propertyObject;
                         }
-                }
 
-                foreach ($moreData as $uri => $value)
-                {
-                        $p = (is_string($value)) ? "'" . $value . "'" : $value;
-                        $sparql->where('<' . $this->identifier . '>', '<' . $uri . '>', $p);
-                }
-
-                if($this::$type != null) $sparql->where('<' . $this->identifier . '>', '<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>', '<'.$this::$type.'>');
-
-                if($this::$status) $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', 1);
-
-                $date = date('Y-m-d H:i:s', time());
-
-                if(!$this->inStore) $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.created') . '>', "'".$date."'");
-                $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.updated') . '>', "'".$date."'");
-
-                $data = $sparql->launch();
-
-                $this->inStore = true;
-        }
-
-
-
-        public function delete($logicDelete=false)
-        {
-                if(!$this->inStore) return;
-
-                $sparql = new SPARQL();
-                $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
-
-                if(!$logicDelete)
-                {
-                    //Real delete
-                    $sparql->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> ?x ?y')
-                            ->where('<' . $this->identifier . '>', '?x', '?y');
-                }
-                else
-                {
-                    //Logic Delete
-                    $sparql->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> <' . Config::get('sparqlmodel.status') . '> ?y')
-                            ->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', '?y');
-                }
-
-                $data = $sparql->launch();
-
-                if($logicDelete)
-                {
-                    $sparql2 = new SPARQL();
-                    $sparql2->baseUrl = Config::get('sparqlmodel.endpoint');
-                    $sparql2->insert(Config::get('sparqlmodel.graph'))
-                            ->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', 2)->launch();
-                }
-
-                $this->inStore = false;
-        }
-
-        public function link($object)
-        {
-                if($this::$multiMapping == null) return;
-
-                $c = get_class($object);
-                $map = null;
-
-                foreach ($this::$multiMapping as $key => $value)
-                {
-                    if(isset($value['mapping']) && $value['mapping'] == $c)
-                    {
-                            $map = $key;
-                            break;
                     }
+                    else continue;
+                }
+               $objects[$id]=$newElement;
+
+            }
+
+        return $objects;
+    }
+
+    public function save($moreData = [])
+    {
+        if ($this->inStore) {
+            //we update here so we delete triples
+
+            $filter = "";
+            foreach ($this::$mapping as $uri => $property) {
+                if (isset($this->$property) && ($uri != Config::get('sparqlmodel.created') || $uri != Config::get('sparqlmodel.updated'))) {
+                    if ($filter != "") $filter .= " || ";
+                    $filter .= "?x = <$uri>";
+                }
+            }
+
+            foreach ($moreData as $uri => $value) {
+                if ($filter != "") $filter .= " || ";
+                $filter .= "?x = <$uri>";
+            }
+
+            $filter .= " || ?x = <" . Config::get('sparqlmodel.updated') . ">";
+
+            $sparqlD = new SPARQL();
+            $sparqlD->baseUrl = Config::get('sparqlmodel.endpoint');
+
+            $sparqlD->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> ?x ?y')
+                ->where('<' . $this->identifier . '>', '?x', '?y')
+                ->filter($filter)
+                ->launch();
+        } else {
+            $this->identifier = $this->generateID();
+            $this->select();
+            if ($this->inStore) return;
+        }
+
+        $this->identifier = $this->generateID();
+
+        $sparql = new SPARQL();
+        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+
+        $sparql->insert(Config::get('sparqlmodel.graph'));
+
+        foreach ($this::$mapping as $uri => $property) {
+            if (isset($this->$property)) {
+                $p = (is_string($this->$property)) ? "'" . $this->$property . "'" : $this->$property;
+                $sparql->where('<' . $this->identifier . '>', '<' . $uri . '>', $p);
+            }
+        }
+
+        foreach ($moreData as $uri => $value) {
+            $p = (is_string($value)) ? "'" . $value . "'" : $value;
+            $sparql->where('<' . $this->identifier . '>', '<' . $uri . '>', $p);
+        }
+
+        if ($this::$type != null) $sparql->where('<' . $this->identifier . '>', '<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>', '<' . $this::$type . '>');
+
+        if ($this::$status) $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', 1);
+
+        $date = date('Y-m-d H:i:s', time());
+
+        if (!$this->inStore) $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.created') . '>', "'" . $date . "'");
+        $sparql->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.updated') . '>', "'" . $date . "'");
+
+        $data = $sparql->launch();
+
+        $this->inStore = true;
+    }
+
+    public function generateID()
+    {
+        throw new Exception("generatedID method has to be overrided");
+    }
+
+    public function select()
+    {
+        if ($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
+
+        $sparql = new SPARQL();
+        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+
+        $filter = "?uri = <" . $this->identifier . "> && (";
+        $first = true;
+        foreach ($this::$mapping as $k => $v) {
+            if ($first) $first = false;
+            else $filter .= " || ";
+
+            $filter .= "?property = <$k>";
+        }
+
+        $filter .= ")";
+
+        $sparql->select(Config::get('sparqlmodel.graph'))->where('?uri', '?property', '?value');
+
+        if ($this::$status) $sparql->where('?uri', '<' . Config::get('sparqlmodel.status') . '>', 1);
+
+        $data = $sparql->filter($filter)->launch();
+
+        if (!isset($data['results']) || !isset($data['results']['bindings'])) {
+            return;
+        }
+
+        foreach ($data['results']['bindings'] as $value) {
+            $this->process($value);
+        }
+    }
+
+    public function process($value)
+    {
+        if (!isset($value['uri']['value']) || $value['uri']['value'] != $this->identifier) return;
+
+        $property = '';
+        if (isset($this::$mapping[$value['property']['value']])) $property = $this::$mapping[$value['property']['value']];
+        else continue;
+
+        $this->$property = $value['value']['value'];
+        $this->inStore = true;
+    }
+
+    public function delete($logicDelete = false)
+    {
+        if (!$this->inStore) return;
+
+        $sparql = new SPARQL();
+        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+
+        if (!$logicDelete) {
+            //Real delete
+            $sparql->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> ?x ?y')
+                ->where('<' . $this->identifier . '>', '?x', '?y');
+        } else {
+            //Logic Delete
+            $sparql->delete(Config::get('sparqlmodel.graph'), '<' . $this->identifier . '> <' . Config::get('sparqlmodel.status') . '> ?y')
+                ->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', '?y');
+        }
+
+        $data = $sparql->launch();
+
+        if ($logicDelete) {
+            $sparql2 = new SPARQL();
+            $sparql2->baseUrl = Config::get('sparqlmodel.endpoint');
+            $sparql2->insert(Config::get('sparqlmodel.graph'))
+                ->where('<' . $this->identifier . '>', '<' . Config::get('sparqlmodel.status') . '>', 2)->launch();
+        }
+
+        $this->inStore = false;
+    }
+
+    public function link($object)
+    {
+        if ($this::$multiMapping == null) return;
+
+        $c = get_class($object);
+        $multimapping = null;
+        $map = null;
+
+        foreach ($this::$multiMapping as $key => $value) {
+            if (isset($value['mapping']) && $value['mapping'] == $c) {
+                $map = $key;
+                $multimapping = $value;
+                break;
+            }
+        }
+
+        if ($map == null) return;
+
+        $sparql = new SPARQL();
+        $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
+        if (isset($value["inverse"]) && $value["inverse"] == true) {
+            $sparql->insert(Config::get('sparqlmodel.graph'))
+                ->where('<' . $object->identifier . '>', '<' . $map . '>', '<' . $this->identifier . '>')
+                ->launch();
+        } else {
+            $sparql->insert(Config::get('sparqlmodel.graph'))
+                ->where('<' . $this->identifier . '>', '<' . $map . '>', '<' . $object->identifier . '>')
+                ->launch();
+        }
+
+    }
+
+    public function exist()
+    {
+        return $this->inStore;
+    }
+
+    /**
+     * Convert the object to its JSON representation.
+     *
+     * @param  int $options
+     * @return string
+     */
+    public function toJson($options = 0)
+    {
+        return json_encode($this->toArray(), $options);
+    }
+
+    /**
+     * Get the instance as an array.
+     *
+     * @return array
+     */
+    public function toArray()
+    {
+        $object = [];
+        $object['id'] = $this->identifier;
+
+        foreach ($this::$mapping as $key => $value) {
+            if (isset($this->$value)) $object[$value] = $this->$value;
+        }
+
+        foreach ($this::$multiMapping as $key => $value) {
+            $p = $value['property'];
+            if (isset($this->$p) && is_array($this->$p) && count($this->$p) > 0) {
+                $element = $this->$p;
+                $element = $element[0];
+
+                if (!is_object($element)) {
+                    $object[$p] = $this->$p;
+                    break;
                 }
 
-                if($map == null) return;
-
-                $sparql = new SPARQL();
-                $sparql->baseUrl = Config::get('sparqlmodel.endpoint');
-                $sparql->insert(Config::get('sparqlmodel.graph'))
-                        ->where('<' . $this->identifier . '>', '<' . $map . '>', '<' . $object->identifier . '>')
-                        ->launch();
-        }
-
-        public static function find($id)
-        {
-                $class = get_called_class();
-                $m = new $class;
-
-                if((strlen($id) < 7 || substr($id, 0, 7) != 'http://') && static::$baseURI != null) $id = static::$baseURI . $id;
-
-                $m->identifier = $id;
-                $m->select();
-
-                return $m;
-        }
-
-        public function exist()
-        {
-            return $this->inStore;
-        }
-
-        public static function getMapping()
-        {
-                return static::$mapping;
-        }
-
-        /**
-         * Convert the object to its JSON representation.
-         *
-         * @param  int  $options
-         * @return string
-         */
-        public function toJson($options = 0)
-        {
-                return json_encode($this->toArray(), $options);
-        }
-
-        /**
-         * Get the instance as an array.
-         *
-         * @return array
-         */
-        public function toArray()
-        {
-                $object = [];
-                $object['id'] = $this->identifier;
-
-                foreach ($this::$mapping as $key => $value) 
-                {
-                        if(isset($this->$value)) $object[$value] = $this->$value;
+                $implements = class_implements(get_class($element));
+                if (in_array('Illuminate\Support\Contracts\ArrayableInterface', $implements)) {
+                    $object[$p] = [];
+                    foreach ($this->$p as $o) {
+                        $object[$p][] = $o->toArray();
+                    }
+                } else {
+                    $object[$p] = $this->$p;
                 }
-
-                foreach ($this::$multiMapping as $key => $value) 
-                {
-                        $p = $value['property'];
-                        if(isset($this->$p) && is_array($this->$p) && count($this->$p) > 0)
-                        {
-                                $element = $this->$p;
-                                $element = $element[0];
-
-                                if(!is_object($element))
-                                {
-                                        $object[$p] = $this->$p;
-                                        break;
-                                }
-
-                                $implements = class_implements(get_class($element));
-                                if(in_array('Illuminate\Support\Contracts\ArrayableInterface', $implements))
-                                {
-                                        $object[$p] = [];
-                                        foreach ($this->$p as $o) 
-                                        {
-                                                $object[$p][] = $o->toArray();
-                                        }
-                                }
-                                else
-                                {
-                                        $object[$p] = $this->$p;
-                                }
-                        }
-                        elseif(isset($this->$p)) $object[$p] = $this->$p;
-                }
-
-                return $object;
+            } elseif (isset($this->$p)) $object[$p] = $this->$p;
         }
 
-        public function generateID()
-        {
-            throw new Exception("generatedID method has to be overrided");
-        }
+        return $object;
+    }
 }
