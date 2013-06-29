@@ -38,6 +38,8 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
     public $identifier = null;
     public $inStore = false;
 
+
+
     public static function init()
     {
 
@@ -65,6 +67,10 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
     public static function getMapping()
     {
         return static::$mapping;
+    }
+    public static function getMultiMapping()
+    {
+        return static::$multiMapping;
     }
 
     public static function lazyLoad($objects, $properties = array())
@@ -146,15 +152,12 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
 
     }
 
-    public static function listingFromQuery($query, $forProperty = false)
+    public static function listingFromQuery($sparql, $forProperty = false)
     {
         $class = get_called_class();
-        //if ($this->identifier == null || $this->identifier == "") throw new Exception('The identifier has no value');
-        $sparql = new SPARQL();
-        $sparql->baseUrl = $class::getConfig('sparqlmodel.endpoint');
-        $sparql->sparql = $query;
-        $data = $sparql->launch(false);
 
+        $data = $sparql->launch(false);
+        //echo $sparql->sparql;
         foreach ($data['results']['bindings'] as $value) {
             if (!isset($array[$value["s"]["value"]]))
                 $array[$value["s"]["value"]] = array();
