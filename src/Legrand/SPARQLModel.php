@@ -112,18 +112,26 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
             }
         }
         $uris = array_keys($indexed_objects);
-        foreach ($uris as &$uri) {
+        if(count($uris)>0){
+            foreach ($uris as &$uri) {
 
-            $uri = '<' . $uri . '>';
-        }
+                $uri = '<' . $uri . '>';
+            }
+
 
             $filter_range = '(' . implode(", ", $uris) . ')';
             $sparql->filter('?uri IN' . $filter_range);
+        }
+        else return;
+
 
 
         $data = $sparql->launch(false);
-        //var_dump($sparql);
-       // var_dump($data);
+       // var_dump($sparql->sparql);
+        //var_dump($data);
+
+        if(!isset($data))return;
+
         foreach ($data['results']['bindings'] as $value) {
             foreach($value as $k=>$v){
                 if($k=="uri")continue;
@@ -155,7 +163,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
     public static function listingFromQuery($sparql, $forProperty = false)
     {
         $class = get_called_class();
-
+        $array = array();
         $data = $sparql->launch(false);
         //echo $sparql->sparql;
         foreach ($data['results']['bindings'] as $value) {
@@ -285,7 +293,6 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
 
             if ($forProperty != false) break;
         }
-
         return $this;
     }
 
@@ -496,6 +503,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
         $object['id'] = $this->identifier;
         if ($expand && !$this->inStore) $this->select();
         foreach ($this::$mapping as $key => $value) {
+
             if (isset($this->$value)) $object[$value] = $this->$value;
 
 
@@ -517,7 +525,9 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                 if (in_array('Illuminate\Support\Contracts\ArrayableInterface', $implements)) {
                     $object[$p] = [];
                     foreach ($this->$p as $o) {
+                        $o->listing();
                         $object[$p][] = $o->toArray();
+
                     }
                 } else {
                     $object[$p] = $this->$p;
