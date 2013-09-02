@@ -160,12 +160,12 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
 
     }
 
-    public static function listingFromQuery($sparql, $forProperty = false)
+    public static function listingFromQuery($sparql)
     {
         $class = get_called_class();
         $array = array();
         $data = $sparql->launch(false);
-        //echo $sparql->sparql;
+        //var_dump($sparql->sparql);die;
         foreach ($data['results']['bindings'] as $value) {
             if (!isset($array[$value["s"]["value"]]))
                 $array[$value["s"]["value"]] = array();
