@@ -165,7 +165,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
         $class = get_called_class();
         $array = array();
         $data = $sparql->launch(false);
-        //var_dump($sparql->sparql);die;
+
         foreach ($data['results']['bindings'] as $value) {
             if (!isset($array[$value["s"]["value"]]))
                 $array[$value["s"]["value"]] = array();
@@ -211,7 +211,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
             $objects[$id] = $newElement;
 
         }
-
+        //var_dump($sparql->sparql);die;
         return $objects;
     }
 
@@ -525,8 +525,12 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                 if (in_array('Illuminate\Support\Contracts\ArrayableInterface', $implements)) {
                     $object[$p] = [];
                     foreach ($this->$p as $o) {
-                        $o->listing();
-                        $object[$p][] = $o->toArray();
+                        if($expand){
+                            $o->listing();
+
+                        }
+                        $object[$p][] = $o->toArray($expand);
+
 
                     }
                 } else {
