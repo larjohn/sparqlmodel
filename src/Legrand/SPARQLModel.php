@@ -26,6 +26,7 @@ use Illuminate\Support\Contracts\ArrayableInterface;
 use Illuminate\Support\Facades\Config;
 use Legrand\SPARQL;
 
+
 class SPARQLModel implements JsonableInterface, ArrayableInterface
 {
 
@@ -73,7 +74,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
         return static::$multiMapping;
     }
 
-    public static function lazyLoad($objects, $properties = array())
+    public static function lazyLoad($objects, $properties = array(),  $endpoint= null )
     {
         $class = get_called_class();
         $indexed_objects = array();
@@ -82,7 +83,8 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
         }
 
         $sparql = new SPARQL();
-        $sparql->baseUrl = $class::getConfig('sparqlmodel.endpoint');
+        if(isset($endpoint)) $sparql->baseUrl = $endpoint;
+        else $sparql->baseUrl = $class::getConfig('sparqlmodel.endpoint');
 
         $sparql->select($class::getConfig('sparqlmodel.graph'))->distinct(true);
         $sparql->variable("?uri");
@@ -106,7 +108,6 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                         }
                     }
                 if($propertyUri=="")continue;
-
                 $sparql->variable("?".$property);
                 $sparql->where('?uri', '<' . $propertyUri . '>', '?' . $property);
             }
@@ -127,34 +128,41 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
 
 
         $data = $sparql->launch(false);
-       // var_dump($sparql->sparql);
-        //var_dump($data);
+       //var_dump($sparql->sparql);
 
         if(!isset($data))return;
-
+        $vals = array();
         foreach ($data['results']['bindings'] as $value) {
+
             foreach($value as $k=>$v){
+                if(!isset($vals[$k]))$vals[$k] = array();
                 if($k=="uri")continue;
                 $found = false;
                 foreach($class::$multiMapping as $propURI=>$map){
 
                     if($map['property'] ==$k){
+
                         $propertyClass = $map['mapping'];
                         $propertyObject = new $propertyClass();
                         $propertyObject->identifier = $v["value"];
-                        $indexed_objects[$value["uri"]]->$k = $propertyObject;
+                        $vals[$k][] = $propertyObject;
+                       // var_dump($propertyObject);
                         $found = true;
                         break;
                     }
                 }
-                if($found)continue;
 
-                $indexed_objects[$value["uri"]["value"]]->$k = $v["value"];
-            }
+                //if($found)continue;
 
+
+                //$indexed_objects[$value["uri"]["value"]]->$k = $v["value"];
+            }//var_dump($vals);
+            $indexed_objects[$value["uri"]["value"]]->$k = $vals[$k] ;
+            //var_dump( $indexed_objects[$value["uri"]["value"]]->$k);
 
 
         }
+
 
 
 
@@ -289,6 +297,12 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                 }
             }
 
+
+            if(isset($this->$v['property'])){
+
+                $this->$v['property'] = array_merge($this->$v['property'],$array);
+            }
+            else
             $this->$v['property'] = $array;
 
             if ($forProperty != false) break;
@@ -526,6 +540,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                     $object[$p] = [];
                     foreach ($this->$p as $o) {
                         if($expand){
+
                             $o->listing();
 
                         }
@@ -536,7 +551,10 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                 } else {
                     $object[$p] = $this->$p;
                 }
-            } elseif (isset($this->$p)) $object[$p] = $this->$p;
+            } elseif (isset($this->$p)){
+                if($p == "category")
+                $object[$p] = $this->$p;
+            }
         }
 
         return $object;
