@@ -128,7 +128,7 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
 
 
         $data = $sparql->launch(false);
-       //var_dump($sparql->sparql);
+       //var_dump($sparql->getQuery());
 
         if(!isset($data))return;
         $vals = array();
@@ -552,7 +552,6 @@ class SPARQLModel implements JsonableInterface, ArrayableInterface
                     $object[$p] = $this->$p;
                 }
             } elseif (isset($this->$p)){
-                if($p == "category")
                 $object[$p] = $this->$p;
             }
         }
